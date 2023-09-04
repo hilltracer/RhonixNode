@@ -113,15 +113,14 @@ lazy val api = (project in file("api"))
   )
   .dependsOn(sdk % "compile->compile;test->test")
 
-// TODO this is commented out since JmhPlugin messes up with compile paths and IDEA doesn't like it
-// lazy val bench = (project in file("bench"))
-//  //  .settings(settingsScala3*) // Not supported in IntelliJ Scala plugin
-//  .settings(settingsScala2*)
-//  .enablePlugins(JmhPlugin)
-//  .settings(
-//    libraryDependencies ++= common ++ Seq(protobuf, grpc, grpcNetty) ++ tests,
-//  )
-//  .dependsOn(sdk, weaver)
+lazy val bench = (project in file("bench"))
+  //  .settings(settingsScala3*) // Not supported in IntelliJ Scala plugin
+  .settings(settingsScala2*)
+  .enablePlugins(JmhPlugin)
+  .settings(
+    libraryDependencies ++= common ++ Seq(protobuf, grpc, grpcNetty) ++ tests,
+  )
+  .dependsOn(sdk, legacy)
 
 lazy val sim = (project in file("sim"))
   //  .settings(settingsScala3*) // Not supported in IntelliJ Scala plugin
@@ -158,8 +157,8 @@ lazy val legacy = (project in file("legacy"))
       options.filterNot(Set("-Xfatal-warnings", "-Ywarn-unused:imports")) ++ Seq(
         "-Xlint:-strict-unsealed-patmat",
         "-Xnon-strict-patmat-analysis",
-        "-Wconf:cat=deprecation:ws", // suppress deprecation warnings
-        "-Xlint:-missing-interpolator" // Disable false positive strings containing ${...}
+        "-Wconf:cat=deprecation:ws",   // suppress deprecation warnings
+        "-Xlint:-missing-interpolator",// Disable false positive strings containing ${...}
       )
     },
     Compile / compile / wartremoverErrors ~= {
@@ -169,8 +168,9 @@ lazy val legacy = (project in file("legacy"))
       new Target(
         gen(flatPackage = true)._1,
         (Compile / sourceManaged).value,
-        gen(flatPackage = true)._2
-      )),
+        gen(flatPackage = true)._2,
+      ),
+    ),
     libraryDependencies ++= common ++ tests ++ legacyLibs,
     resolvers += ("jitpack" at "https://jitpack.io"),
   )
