@@ -1,4 +1,4 @@
-package io.rhonix.bench
+package coop.rchain.rholang
 
 import cats.Eval
 import coop.rchain.catscontrib.effect.implicits.sEval
