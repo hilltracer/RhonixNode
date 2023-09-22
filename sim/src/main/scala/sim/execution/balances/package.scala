@@ -13,12 +13,14 @@ package object balances {
   type Wallet  = Int
   type Balance = Long
 
+  @SuppressWarnings(Array("org.wartremover.warts.NonUnitStatements"))
   private def longToArray(x: Long): Array[Byte] = {
     val byteBuffer: ByteBuffer = ByteBuffer.allocate(java.lang.Long.BYTES)
     byteBuffer.putLong(x)
     byteBuffer.array()
   }
 
+  @SuppressWarnings(Array("org.wartremover.warts.NonUnitStatements"))
   private def intToArray(x: Int): Array[Byte] = {
     val byteBuffer: ByteBuffer = ByteBuffer.allocate(java.lang.Integer.BYTES)
     byteBuffer.putInt(x)
