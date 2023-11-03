@@ -1,8 +1,9 @@
 package sdk.history
 
 import cats.Parallel
-import cats.effect.Sync
+import cats.effect.{Concurrent, Ref, Sync}
 import cats.syntax.all.*
+import fs2.Stream
 import sdk.history.KeySegment.*
 import sdk.primitive.ByteArray
 import sdk.store.KeyValueTypedStore
@@ -534,6 +535,36 @@ object RadixTree {
       r              <- rootNodeSerOpt.map(doExport).getOrElse(emptyResult)
     } yield r
   }
+
+  /**
+   * Export data from store
+   * @param roots Root vertices of exported trees
+   * @param getBytes Function to get data from storage
+   * @return Stream KV-pairs
+   */
+  def exportState[F[_]: Parallel: Concurrent](
+    roots: Seq[ByteArray32],
+    getBytes: ByteArray32 => F[ByteArray],
+  ): Stream[F, (ByteArray32, ByteArray)] =
+    Stream.eval[F, Ref[F, Set[ByteArray32]]](Ref.of[F, Set[ByteArray32]](Set.empty)).flatMap { ref =>
+      def loop(hashes: Seq[ByteArray32]): Stream[F, (ByteArray32, ByteArray)] = {
+        val streamsF: F[Seq[Stream[F, (ByteArray32, ByteArray)]]] = hashes.parTraverse { hash =>
+          ref.flatModify { alreadyProcessed =>
+            if (alreadyProcessed.contains(hash)) (alreadyProcessed, Concurrent[F].pure(Stream.empty))
+            else {
+              val streams = getBytes(hash).map { sData =>
+                val node        = Codecs.decode(sData)
+                val childHashes = node.collect { case NodePtr(_, ptr) => ptr }
+                Stream.emit((hash, sData)) ++ loop(childHashes)
+              }
+              (alreadyProcessed + hash, streams)
+            }
+          }
+        }
+        Stream.eval(streamsF).flatMap(Stream.emits).parJoinUnbounded
+      }
+      loop(roots)
+    }
 
   /**
     * Radix Tree implementation
