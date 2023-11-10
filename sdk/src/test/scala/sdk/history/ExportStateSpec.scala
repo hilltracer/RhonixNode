@@ -19,37 +19,38 @@ import sdk.syntax.all.*
 import scala.concurrent.duration.*
 
 class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with EitherValues {
-  "exportState() function call" should "export all tuple-space data for random tree" in {
+  "parTreeTraverse" should "export all tuple-space data for random tree" in {
     forAll(generateTreeData(10000)) { (inputData: Map[KeySegment, ByteArray32]) =>
-      withImplAndStore { (impl, store) =>
+      withRadixTree { (impl, store, getNext) =>
         val insertActions = inputData.toList.map(kV => InsertAction(kV._1, kV._2))
       for {
         rootNodeAndHashOpt <- impl.saveAndCommit(RadixTree.EmptyNode, insertActions)
         (_, rootHash)       = rootNodeAndHashOpt.get
 
-        storeData <- store.toMap
-
-        exportedStream = exportState(Seq(rootHash), x => store.get1(x).map(_.get))
+        exportedStream =
+          parTreeTraverse[IO, ByteArray32, ByteArray](Seq(rootHash), getNext)
         collectedData <- exportedStream.compile.toList
 
-        _ = storeData shouldBe collectedData.toMap
+        storeData <- store.toMap
+        _          = storeData shouldBe collectedData.toMap
       } yield ()
       }
     }
   }
 
   // This test is necessary to check the stack safety
-  "exportState() function call" should "export data for tree with longest branch" in {
+  "parTreeTraverse" should "export data for tree with longest branch" in {
     val printFlag: Boolean = false // Set this flag to print tree
-    withImplAndStore { (impl, store) =>
+    withRadixTree { (impl, store, getNext) =>
       val insertActions = longestBranch.toList.map(kV => InsertAction(kV._1, kV._2))
       for {
         rootNodeAndHashOpt  <- impl.saveAndCommit(RadixTree.EmptyNode, insertActions)
         (rootNode, rootHash) = rootNodeAndHashOpt.get
 
-        storeData <- store.toMap
+        exportedStream =
+          parTreeTraverse[IO, ByteArray32, ByteArray](Seq(rootHash), getNext)
 
-        exportedStream = exportState(Seq(rootHash), x => store.get1(x).map(_.get))
+        storeData     <- store.toMap
         collectedData <- exportedStream.compile.toList
 
         _ <- if (printFlag) impl.printTree(rootNode, "Longest branch", noPrintFlag = false) else IO.pure(())
@@ -59,7 +60,7 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
   }
 
   // Since trees can intersect, for speedup it is important that the algorithm does not duplicate data during multi-threaded export
-  "exportState() function call" should "not process records which already exported" in {
+  "parTreeTraverse" should "not process records which already exported" in {
     forAll(generateTreeData(5000), generateTreeData(1000), generateTreeData(1000)) {
       // Build two trees based on the same one. Checking that parallel export does not duplicate data.
       (
@@ -67,7 +68,7 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
         tree1Data: Map[KeySegment, ByteArray32],
         tree2Data: Map[KeySegment, ByteArray32],
       ) =>
-        withImplAndStore { (impl, store) =>
+        withRadixTree { (impl, store, getNext) =>
           val baseActions  = baseData.toList.map(kV => InsertAction(kV._1, kV._2))
           val tree1Actions = tree1Data.toList.map(kV => InsertAction(kV._1, kV._2))
           val tree2Actions = tree2Data.toList.map(kV => InsertAction(kV._1, kV._2))
@@ -82,7 +83,8 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
             (_, tree2Hash) = tree2Opt.get
 
             // Parallel export of trees
-            exportedStream     = exportState(Seq(baseHash, tree1Hash, tree2Hash), x => store.get1(x).map(_.get))
+            exportedStream     =
+              parTreeTraverse[IO, ByteArray32, ByteArray](Seq(baseHash, tree1Hash, tree2Hash), getNext)
             collectedDataList <- exportedStream.compile.toList
             collectedDataMap   = collectedDataList.toMap
 
@@ -94,13 +96,13 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
   }
 
   // The storage can contain many trees, it is important that exporting one tree does not pull in unnecessary data related to other trees.
-  "exportState() function call" should "correct export small part of big tree" in {
+  "parTreeTraverse" should "correct export small part of big tree" in {
     forAll(generateTreeData(100), generateTreeData(10000)) {
       (
         smallTreeData: Map[KeySegment, ByteArray32],
         bigTreeData: Map[KeySegment, ByteArray32],
       ) =>
-        withImplAndStore { (impl, store) =>
+        withRadixTree { (impl, store, getNext) =>
           val smallTreeActions = smallTreeData.toList.map(kV => InsertAction(kV._1, kV._2))
           val bigTreeActions   = bigTreeData.toList.map(kV => InsertAction(kV._1, kV._2))
           for {
@@ -113,7 +115,8 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
             _ <- impl.saveAndCommit(smallTreeNode, bigTreeActions)
 
             // Export only small tree
-            exportedStream = exportState(Seq(smallTreeHash), x => store.get1(x).map(_.get))
+            exportedStream =
+              parTreeTraverse[IO, ByteArray32, ByteArray](Seq(smallTreeHash), getNext)
             collectedData <- exportedStream.compile.toList
 
             _ = smallTreeData shouldBe collectedData.toMap
@@ -159,10 +162,17 @@ object ExportStateSpec {
     (branchData :+ lastLeaf).toMap
   }
 
-  def withImplAndStore(f: (RadixTreeImpl[IO], KeyValueTypedStore[IO, ByteArray32, ByteArray]) => IO[Unit]): Unit = {
-    val store         = InMemoryKeyValueStore[IO]()
-    val typedStore    = store.toByteArrayTypedStore(RadixHistory.kCodec, RadixHistory.vCodec)
-    val radixTreeImpl = new RadixTreeImpl[IO](typedStore)
-    f(radixTreeImpl, typedStore).timeout(20.seconds).unsafeRunSync()
+  def withRadixTree(
+    f: (
+      RadixTreeImpl[IO],
+      KeyValueTypedStore[IO, ByteArray32, ByteArray],
+      ByteArray32 => IO[(ByteArray, Seq[ByteArray32])],
+    ) => IO[Unit],
+  ): Unit = {
+    val store                         = InMemoryKeyValueStore[IO]()
+    val typedStore                    = store.toByteArrayTypedStore(RadixHistory.kCodec, RadixHistory.vCodec)
+    val radixTreeImpl                 = new RadixTreeImpl[IO](typedStore)
+    def getNext(nodePtr: ByteArray32) = radixTreeImpl.getNextForTraverse(nodePtr).map(_.get)
+    f(radixTreeImpl, typedStore, getNext).timeout(20.seconds).unsafeRunSync()
   }
 }

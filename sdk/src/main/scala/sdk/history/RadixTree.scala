@@ -537,33 +537,31 @@ object RadixTree {
   }
 
   /**
-   * Export data from store
-   * @param roots Root vertices of exported trees
-   * @param getBytes Function to get data from storage
+   * Concurrent traverse tree, return all tree data
+   * @param startNodes Root vertices of exported trees
+   * @param getNext Get value and all children for this node
    * @return Stream KV-pairs
    */
-  def exportState[F[_]: Parallel: Concurrent](
-    roots: Seq[ByteArray32],
-    getBytes: ByteArray32 => F[ByteArray],
-  ): Stream[F, (ByteArray32, ByteArray)] =
-    Stream.eval[F, Ref[F, Set[ByteArray32]]](Ref.of[F, Set[ByteArray32]](Set.empty)).flatMap { ref =>
-      def loop(hashes: Seq[ByteArray32]): Stream[F, (ByteArray32, ByteArray)] = {
-        val streamsF: F[Seq[Stream[F, (ByteArray32, ByteArray)]]] = hashes.parTraverse { hash =>
+  def parTreeTraverse[F[_]: Parallel: Concurrent, K, V](
+    startNodes: Seq[K],
+    getNext: K => F[(V, Seq[K])],
+  ): Stream[F, (K, V)] =
+    Stream.eval[F, Ref[F, Set[K]]](Ref.of[F, Set[K]](Set.empty)).flatMap { ref =>
+      def loop(nodeKeys: Seq[K]): Stream[F, (K, V)] = {
+        val streamsF: F[Seq[Stream[F, (K, V)]]] = nodeKeys.parTraverse { curKey =>
           ref.flatModify { alreadyProcessed =>
-            if (alreadyProcessed.contains(hash)) (alreadyProcessed, Concurrent[F].pure(Stream.empty))
+            if (alreadyProcessed.contains(curKey)) (alreadyProcessed, Concurrent[F].pure(Stream.empty))
             else {
-              val streams = getBytes(hash).map { sData =>
-                val node        = Codecs.decode(sData)
-                val childHashes = node.collect { case NodePtr(_, ptr) => ptr }
-                Stream.emit((hash, sData)) ++ loop(childHashes)
+              val streams = getNext(curKey).map { case (curValue, childKeys) =>
+                Stream.emit((curKey, curValue)) ++ loop(childKeys)
               }
-              (alreadyProcessed + hash, streams)
+              (alreadyProcessed + curKey, streams)
             }
           }
         }
         Stream.eval(streamsF).flatMap(Stream.emits).parJoinUnbounded
       }
-      loop(roots)
+      loop(startNodes)
     }
 
   /**
@@ -600,6 +598,21 @@ object RadixTree {
       */
     private def loadNodeFromStore(nodePtr: ByteArray32): F[Option[Node]] =
       store.get1(nodePtr).map(_.map(Codecs.decode))
+
+    /**
+     * Load serialized data for a node from store, decode and find all children.
+     * @param nodePtr Node key in store
+     * @return None - if a node with such a key is not found;
+     *         or Some(serialized data, list of child node keys)
+     */
+    def getNextForTraverse(nodePtr: ByteArray32): F[Option[(ByteArray, List[ByteArray32])]] =
+      store
+        .get1(nodePtr)
+        .map(_.map { nodeBytes =>
+          val node      = Codecs.decode(nodeBytes)
+          val childPtrs = node.collect { case NodePtr(_, ptr) => ptr }
+          (nodeBytes, childPtrs.toList)
+        })
 
     /**
       * Cache for storing read and decoded nodes.
