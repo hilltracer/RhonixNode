@@ -19,8 +19,8 @@ import sdk.syntax.all.*
 import scala.concurrent.duration.*
 
 class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with EitherValues {
-  "parTreeTraverse" should "export all tuple-space data for random tree" in {
-    forAll(generateTreeData(10000)) { (inputData: Map[KeySegment, ByteArray32]) =>
+  "parTreeTraverse" should "export all tuple-space data for random history" in {
+    forAll(generateHistoryData(10000)) { (inputData: Map[KeySegment, ByteArray32]) =>
       withRadixTree { (impl, store, getNext) =>
         val insertActions = inputData.toList.map(kV => InsertAction(kV._1, kV._2))
       for {
@@ -39,7 +39,7 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
   }
 
   // This test is necessary to check the stack safety
-  "parTreeTraverse" should "export data for tree with longest branch" in {
+  "parTreeTraverse" should "export data for history with longest branch" in {
     val printFlag: Boolean = false // Set this flag to print tree
     withRadixTree { (impl, store, getNext) =>
       val insertActions = longestBranch.toList.map(kV => InsertAction(kV._1, kV._2))
@@ -60,15 +60,15 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
   }
 
   // Since trees can intersect, for speedup it is important that the algorithm does not duplicate data during multi-threaded export
-  "parTreeTraverse" should "not process records which already exported" in {
-    forAll(generateTreeData(5000), generateTreeData(1000), generateTreeData(1000)) {
+  "parTreeTraverse" should "not process history records which already exported" in {
+    forAll(generateHistoryData(5000), generateHistoryData(1000), generateHistoryData(1000)) {
       // Build two trees based on the same one. Checking that parallel export does not duplicate data.
       (
         baseData: Map[KeySegment, ByteArray32],
         tree1Data: Map[KeySegment, ByteArray32],
         tree2Data: Map[KeySegment, ByteArray32],
       ) =>
-        withRadixTree { (impl, store, getNext) =>
+        withRadixTree { (impl, _, getNext) =>
           val baseActions  = baseData.toList.map(kV => InsertAction(kV._1, kV._2))
           val tree1Actions = tree1Data.toList.map(kV => InsertAction(kV._1, kV._2))
           val tree2Actions = tree2Data.toList.map(kV => InsertAction(kV._1, kV._2))
@@ -96,8 +96,8 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
   }
 
   // The storage can contain many trees, it is important that exporting one tree does not pull in unnecessary data related to other trees.
-  "parTreeTraverse" should "correct export small part of big tree" in {
-    forAll(generateTreeData(100), generateTreeData(10000)) {
+  "parTreeTraverse" should "correct export small part of big history" in {
+    forAll(generateHistoryData(100), generateHistoryData(10000)) {
       (
         smallTreeData: Map[KeySegment, ByteArray32],
         bigTreeData: Map[KeySegment, ByteArray32],
@@ -128,13 +128,13 @@ class ExportStateSpec extends AnyFlatSpec with Matchers with OptionValues with E
 }
 
 object ExportStateSpec {
-  implicit private val keySegmentGen: Arbitrary[KeySegment]   =
-    Arbitrary(Gen.listOfN(32, Gen.alphaChar).map(chars => KeySegment(chars.mkString.getBytes)))
-  implicit private val byteArray32Gen: Arbitrary[ByteArray32] =
-    Arbitrary(Gen.listOfN(32, Gen.alphaChar).map(chars => ByteArray32.convert(chars.mkString.getBytes).getUnsafe))
-
-  def generateTreeData(size: Int): Gen[Map[KeySegment, ByteArray32]] =
+  def generateHistoryData(size: Int): Gen[Map[KeySegment, ByteArray32]] = {
+    implicit val keySegmentGen: Arbitrary[KeySegment]   =
+      Arbitrary(Gen.listOfN(32, Gen.alphaChar).map(chars => KeySegment(chars.mkString.getBytes)))
+    implicit val byteArray32Gen: Arbitrary[ByteArray32] =
+      Arbitrary(Gen.listOfN(32, Gen.alphaChar).map(chars => ByteArray32.convert(chars.mkString.getBytes).getUnsafe))
     Gen.listOfN(size, Arbitrary.arbitrary[(KeySegment, ByteArray32)]).map(_.toMap)
+  }
 
   /** Return data for generating a tree with the longest possibility branch. */
   /*
