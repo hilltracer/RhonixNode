@@ -17,24 +17,24 @@ final case class NormalizerRecImpl[
 
   implicit val nRec: NormalizerRec[F] = this
 
-  override def normalize(proc: Proc): F[ParN] = NormalizerRecImpl.normalize[F, T](proc)
+  override def normalize(proc: Proc): F[ParN] = Sync[F].defer(NormalizerRecImpl.normalize[F, T](proc))
 
-  override def normalize(name: Name): F[ParN] = name match {
+  override def normalize(name: Name): F[ParN] = Sync[F].defer(name match {
     case nv: NameVar      =>
       VarNormalizer.normalizeBoundVar[F, T](nv.var_, SourcePosition(nv.line_num, nv.col_num), NameSort).widen
     case nq: NameQuote    => NormalizerRec[F].normalize(nq.proc_)
     case wc: NameWildcard => VarNormalizer.normalizeWildcard[F](SourcePosition(wc.line_num, wc.col_num)).widen
-  }
+  })
 
-  override def normalize(remainder: ProcRemainder): F[Option[VarN]] = remainder match {
+  override def normalize(remainder: ProcRemainder): F[Option[VarN]] = Sync[F].defer(remainder match {
     case _: ProcRemainderEmpty => Sync[F].pure(None)
     case pr: ProcRemainderVar  => VarNormalizer.normalizeRemainder[F, T](pr.procvar_).map(_.some)
-  }
+  })
 
-  override def normalize(remainder: NameRemainder): F[Option[VarN]] = remainder match {
+  override def normalize(remainder: NameRemainder): F[Option[VarN]] = Sync[F].defer(remainder match {
     case _: NameRemainderEmpty => Sync[F].pure(None)
     case nr: NameRemainderVar  => VarNormalizer.normalizeRemainder[F, T](nr.procvar_).map(_.some)
-  }
+  })
 }
 
 object NormalizerRecImpl {
