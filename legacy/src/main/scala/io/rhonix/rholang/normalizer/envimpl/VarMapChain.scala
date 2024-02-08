@@ -55,6 +55,15 @@ final class VarMapChain[F[_]: Sync, T](private val chain: HistoryChain[VarMap[T]
   def getVar(name: String): Option[VarContext[T]] = chain.current().get(name)
 
   /**
+   * Retrieves a variable from the current variable map. The index is inverted.
+   *
+   * @param name the name of the variable.
+   * @return an option containing the variable context if the variable exists, None otherwise.
+   */
+  // TODO: Should be removed after reducer rewriting
+  def getVarInverted(name: String): Option[VarContext[T]] = chain.current().getInverted(name)
+
+  /**
    * Retrieves all variables in the current scope.
    *
    * @return a sequence of tuples, where each tuple contains the name of a variable and its context.
@@ -69,6 +78,18 @@ final class VarMapChain[F[_]: Sync, T](private val chain: HistoryChain[VarMap[T]
    */
   def getFirstVarInChain(name: String): Option[(VarContext[T], Int)] =
     chain.iter.zipWithIndex.toSeq.collectFirstSome { case (boundMap, depth) => boundMap.get(name).map((_, depth)) }
+
+  /**
+   * Searches for a variable in the chain of variable maps and returns the first match along with its depth. The index is inverted.
+   *
+   * @param name the name of the variable.
+   * @return an option containing a tuple with the variable context and its depth if the variable exists, None otherwise.
+   */
+  // TODO: Should be removed after reducer rewriting
+  def getFirstVarInChainInverted(name: String): Option[(VarContext[T], Int)] =
+    chain.iter.zipWithIndex.toSeq.collectFirstSome { case (boundMap, depth) =>
+      boundMap.getInverted(name).map((_, depth))
+    }
 
   /**
    * Returns an iterator over the variable maps in the chain.

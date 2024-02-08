@@ -85,8 +85,11 @@ object Compiler {
 
       val boundMapChain                                    = VarMapChain.empty[F, VarSort]
       implicit val boundVarWriter: BoundVarWriter[VarSort] = BoundVarWriterImpl(boundMapChain.putVar)
+      // TODO: Utilized get methods with index inversion as it functions equivalently to the legacy implementation.
+      //  This approach ensures compatibility with the legacy reducer and associated tests.
+      //  However, it should be rewritten using non-inverted methods following the completion of reducer rewriting.
       implicit val boundVarReader: BoundVarReader[VarSort] =
-        BoundVarReaderImpl(boundMapChain.getVar, boundMapChain.getFirstVarInChain)
+        BoundVarReaderImpl(boundMapChain.getVarInverted, boundMapChain.getFirstVarInChainInverted)
       implicit val boundVarScope: BoundVarScope[F]         = BoundVarScopeImpl(boundMapChain)
 
       val freeMapChain                                   = VarMapChain.empty[F, VarSort]
